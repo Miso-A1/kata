@@ -90,15 +90,23 @@ def resolve_sn60_lane_king_hash(
     return None
 
 
-def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
+def resolve_sn60_king_artifact(
+    metadata: SubmissionMetadata,
+    *,
+    public_root: str | None = None,
+) -> tuple[str, str]:
     """Resolve (lane_id, king_artifact_path) for an SN60 duel from the pack registry."""
-    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+    entry = find_evaluator_pack_entry(
+        metadata.repo_pack,
+        metadata.mode,
+        public_root=public_root,
+    )
     if entry is None:
         raise ValueError(
             f"No evaluator-backed lane is registered for `{metadata.repo_pack}/{metadata.mode}`."
         )
     king_root = resolve_public_king_root(
-        public_root=None,
+        public_root=public_root,
         repo_pack=metadata.repo_pack,
         mode=metadata.mode,
     )

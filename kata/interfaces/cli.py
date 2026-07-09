@@ -199,6 +199,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional submissions root. Defaults to ./submissions.",
     )
     submission_init.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional public Kata root used to resolve the pack registry.",
+    )
+    submission_init.add_argument(
         "--author",
         default=None,
         help="Optional GitHub username for leaderboard identity and avatar lookup.",
@@ -233,6 +238,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional Kata repo root used to resolve changed paths.",
     )
     submission_validate.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional public Kata root used to resolve lane registry and king artifacts.",
+    )
+    submission_validate.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -260,6 +270,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional newline-delimited file of changed paths from the PR diff.",
     )
     submission_inspect.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional public Kata root used to resolve the pack registry.",
+    )
+    submission_inspect.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -279,6 +294,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-root",
         default=None,
         help="Optional base directory for run artifacts. Defaults to ./runs.",
+    )
+    submission_evaluate.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional public Kata root used to resolve lane registry and king artifacts.",
     )
     submission_evaluate.add_argument(
         "--sn60-project-key",
@@ -332,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the challenge_summary.json generated for this submission.",
     )
     submission_verify.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional public Kata root used to resolve lane state.",
+    )
+    submission_verify.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -351,6 +376,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--challenge-run",
         required=True,
         help="Path to the challenge_summary.json generated for this submission.",
+    )
+    submission_decide.add_argument(
+        "--public-root",
+        default=None,
+        help="Optional public Kata root used to resolve lane state.",
     )
     submission_decide.add_argument(
         "--json",
@@ -457,6 +487,7 @@ def handle_submission_init(args: argparse.Namespace) -> int:
         mode=args.mode,
         submission_id=args.submission_id,
         output_root=args.output_root,
+        public_root=args.public_root,
         author=args.author,
         title=args.title,
         notes=args.notes,
@@ -471,6 +502,7 @@ def handle_submission_validate(args: argparse.Namespace) -> int:
         args.path,
         changed_paths=changed_paths,
         repo_root=args.repo_root,
+        public_root=args.public_root,
     )
     print(render_submission_json(result) if args.json else render_submission_validation(result))
     return 0 if result.is_valid else 2
@@ -480,6 +512,7 @@ def handle_submission_inspect(args: argparse.Namespace) -> int:
     result = inspect_pull_request(
         repo_root=args.repo_root,
         changed_paths=collect_changed_paths(args.changed_path, args.changed_path_file),
+        public_root=args.public_root,
     )
     print(render_submission_json(result) if args.json else render_pull_request_inspection(result))
     return 0 if result.action == "evaluate" else 2
@@ -489,6 +522,7 @@ def handle_submission_evaluate(args: argparse.Namespace) -> int:
     summary = evaluate_submission(
         args.path,
         output_root=args.output_root,
+        public_root=args.public_root,
         sn60_project_keys=args.sn60_project_key,
         sn60_replicas_per_project=args.sn60_replicas_per_project,
         sn60_sandbox_root=args.sn60_sandbox_root,
@@ -512,13 +546,21 @@ def handle_submission_evaluate(args: argparse.Namespace) -> int:
 
 
 def handle_submission_verify(args: argparse.Namespace) -> int:
-    result = verify_submission_result(args.path, args.challenge_run)
+    result = verify_submission_result(
+        args.path,
+        args.challenge_run,
+        public_root=args.public_root,
+    )
     print(render_submission_json(result) if args.json else render_submission_verification(result))
     return 0 if result.auto_merge_ready else 2
 
 
 def handle_submission_decide(args: argparse.Namespace) -> int:
-    result = decide_submission_action(args.path, args.challenge_run)
+    result = decide_submission_action(
+        args.path,
+        args.challenge_run,
+        public_root=args.public_root,
+    )
     print(render_submission_json(result) if args.json else render_submission_decision(result))
     return 0 if result.action == "merge" else 2
 

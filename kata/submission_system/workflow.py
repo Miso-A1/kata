@@ -98,12 +98,13 @@ def init_submission(
     mode: str,
     submission_id: str,
     output_root: str | None = None,
+    public_root: str | None = None,
     author: str | None = None,
     title: str | None = None,
     notes: str | None = None,
 ) -> Path:
     validate_submission_mode(mode)
-    lane_reasons = validate_submission_lane(repo_pack, mode)
+    lane_reasons = validate_submission_lane(repo_pack, mode, public_root=public_root)
     if lane_reasons:
         raise ValueError("; ".join(lane_reasons))
     effective_author = author.strip() if author and author.strip() else None
@@ -250,24 +251,28 @@ def evaluate_submission(
     submission_path: str,
     *,
     output_root: str | None = None,
+    public_root: str | None = None,
     sn60_project_keys: list[str] | None = None,
     sn60_replicas_per_project: int | None = None,
     sn60_sandbox_root: str | None = None,
     sn60_benchmark_file: str | None = None,
     sn60_sandbox_commit: str | None = None,
 ) -> ChallengeSummary:
-    validation = validate_submission(submission_path)
+    validation = validate_submission(submission_path, public_root=public_root)
     if not validation.is_valid or validation.metadata is None or validation.agent_path is None:
         raise ValueError(
             "Submission is invalid. Run `kata submission validate` first. "
             + "; ".join(validation.reasons or ["unknown validation failure"])
         )
-    if not is_sn60_miner_metadata(validation.metadata):
+    if not is_sn60_miner_metadata(validation.metadata, public_root=public_root):
         raise ValueError(
             "Submission does not target a registered SN60 evaluator lane. "
             "Register the lane in the pack registry before evaluating."
         )
-    lane_id, king_artifact_path = resolve_sn60_king_artifact(validation.metadata)
+    lane_id, king_artifact_path = resolve_sn60_king_artifact(
+        validation.metadata,
+        public_root=public_root,
+    )
     project_keys = resolve_sn60_project_keys(
         configured_keys=sn60_project_keys,
         sandbox_root=sn60_sandbox_root,
@@ -293,11 +298,20 @@ def evaluate_submission(
         sandbox_root=sn60_sandbox_root,
         benchmark_file=sn60_benchmark_file,
         sandbox_commit=sn60_sandbox_commit,
+        public_root=public_root,
     )
 
 
-def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
-    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+def is_sn60_miner_metadata(
+    metadata: SubmissionMetadata,
+    *,
+    public_root: str | None = None,
+) -> bool:
+    entry = find_evaluator_pack_entry(
+        metadata.repo_pack,
+        metadata.mode,
+        public_root=public_root,
+    )
     return entry is not None and entry.evaluator_id == SN60_BITSEC_EVALUATOR_ID
 
 
@@ -330,6 +344,7 @@ def inspect_pull_request(
     *,
     repo_root: str,
     changed_paths: list[str],
+    public_root: str | None = None,
 ) -> PullRequestInspectionResult:
     resolved_repo_root = Path(repo_root).expanduser().resolve()
     normalized_changed = normalize_changed_paths(changed_paths)
@@ -403,7 +418,13 @@ def inspect_pull_request(
         reasons.append(
             "PR changes files outside the allowed submission directory or adds unsupported files."
         )
-    reasons.extend(validate_submission_lane(descriptor.repo_pack, descriptor.mode))
+    reasons.extend(
+        validate_submission_lane(
+            descriptor.repo_pack,
+            descriptor.mode,
+            public_root=public_root,
+        )
+    )
 
     action = PR_ACTION_EVALUATE if not reasons else PR_ACTION_CLOSE_INVALID
     return PullRequestInspectionResult(
@@ -502,8 +523,10 @@ def verify_submission_result(
 def decide_submission_action(
     submission_path: str,
     challenge_summary_path: str,
+    *,
+    public_root: str | None = None,
 ) -> SubmissionDecisionResult:
-    validation = validate_submission(submission_path)
+    validation = validate_submission(submission_path, public_root=public_root)
     if not validation.is_valid or validation.metadata is None:
         reasons = validation.reasons or ["Submission is invalid."]
         return SubmissionDecisionResult(
@@ -519,7 +542,11 @@ def decide_submission_action(
             auto_merge_ready=False,
         )
 
-    verification = verify_submission_result(submission_path, challenge_summary_path)
+    verification = verify_submission_result(
+        submission_path,
+        challenge_summary_path,
+        public_root=public_root,
+    )
     if verification.auto_merge_ready:
         return SubmissionDecisionResult(
             action=PR_ACTION_MERGE,

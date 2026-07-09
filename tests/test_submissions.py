@@ -384,12 +384,52 @@ def test_inspect_pull_request_accepts_single_submission_scope(
     assert result.submission_id == "alice-20260702-01"
 
 
+def test_inspect_pull_request_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    result = inspect_pull_request(
+        repo_root=str(tmp_path),
+        changed_paths=[
+            "submissions/sn60__bitsec/miner/alice-20260702-01/agent.py",
+        ],
+        public_root=str(public_root),
+    )
+
+    assert result.action == PR_ACTION_EVALUATE
+    assert result.submission_id == "alice-20260702-01"
+
+
 def test_decide_submission_action_merges_registry_winner(tmp_path, monkeypatch) -> None:
     _, submission_root, _, summary_path = run_registry_lane_sn60_duel(
         tmp_path, monkeypatch
     )
 
     decision = decide_submission_action(str(submission_root), str(summary_path))
+
+    assert decision.action == PR_ACTION_MERGE
+    assert decision.auto_merge_ready
+
+
+def test_decide_submission_action_honors_explicit_public_root(tmp_path, monkeypatch) -> None:
+    public_root, submission_root, _, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    decision = decide_submission_action(
+        str(submission_root),
+        str(summary_path),
+        public_root=str(public_root),
+    )
 
     assert decision.action == PR_ACTION_MERGE
     assert decision.auto_merge_ready
@@ -681,6 +721,27 @@ def test_init_submission_rejects_inactive_registry_lane(
             submission_id="alice-20260702-01",
             output_root=str(tmp_path / "Kata" / "submissions"),
         )
+
+
+def test_init_submission_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+        public_root=str(public_root),
+    )
+
+    assert (submission_root / "submission.json").exists()
 
 
 def test_validate_submission_rejects_copy_of_lane_king(
@@ -1053,8 +1114,10 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
         ),
         public_root=str(public_root),
     )
-    monkeypatch.setenv("KATA_ROOT", str(public_root))
     king_root = seed_lane_king(public_root, "sn99__custom")
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
 
     repo_root = tmp_path / "Kata"
     submission_root = init_submission(
@@ -1062,6 +1125,7 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
         mode="miner",
         submission_id="alice-20260702-04",
         output_root=str(repo_root / "submissions"),
+        public_root=str(public_root),
     )
     (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
 
@@ -1080,11 +1144,13 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
     summary = evaluate_submission(
         str(submission_root),
         sn60_project_keys=["project-a"],
+        public_root=str(public_root),
     )
 
     assert summary is sentinel
     assert calls["lane_id"] == "sn99__custom"
     assert calls["king_artifact_path"] == str(king_root.resolve())
+    assert calls["public_root"] == str(public_root)
 
 
 def test_verify_and_promote_sn60_registry_lane_end_to_end(

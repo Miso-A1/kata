@@ -144,6 +144,74 @@ def test_lane_cli_sync_registry_rebuilds_from_disk(tmp_path: Path, capsys) -> No
     assert payload["packs"] == ["sn60__bitsec"]
 
 
+def test_submission_cli_accepts_public_root_for_stateful_commands() -> None:
+    parser = build_parser()
+
+    cases = [
+        [
+            "submission",
+            "init",
+            "--subnet-pack",
+            "sn60__bitsec",
+            "--mode",
+            "miner",
+            "--submission-id",
+            "alice-20260702-01",
+            "--public-root",
+            "/public",
+        ],
+        [
+            "submission",
+            "validate",
+            "--path",
+            "/submission",
+            "--public-root",
+            "/public",
+        ],
+        [
+            "submission",
+            "inspect-pr",
+            "--repo-root",
+            "/repo",
+            "--changed-path",
+            "submissions/sn60__bitsec/miner/alice-20260702-01/agent.py",
+            "--public-root",
+            "/public",
+        ],
+        [
+            "submission",
+            "evaluate",
+            "--path",
+            "/submission",
+            "--public-root",
+            "/public",
+        ],
+        [
+            "submission",
+            "verify",
+            "--path",
+            "/submission",
+            "--challenge-run",
+            "/runs/challenge_summary.json",
+            "--public-root",
+            "/public",
+        ],
+        [
+            "submission",
+            "decide",
+            "--path",
+            "/submission",
+            "--challenge-run",
+            "/runs/challenge_summary.json",
+            "--public-root",
+            "/public",
+        ],
+    ]
+
+    for argv in cases:
+        assert parser.parse_args(argv).public_root == "/public"
+
+
 def test_parse_round_candidate_accepts_id_path_pairs() -> None:
     assert parse_round_candidate("cand-1=/tmp/agent") == ("cand-1", "/tmp/agent")
     assert parse_round_candidate(" cand-2 = /tmp/x ") == ("cand-2", "/tmp/x")
