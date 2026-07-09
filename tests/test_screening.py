@@ -6,6 +6,8 @@ from pathlib import Path
 from kata.evaluators.sn60_bitsec import Sn60ReplicaContext, resolve_sn60_sandbox_source
 from kata.screening_system import screen_submission
 from kata.screening_system.models import ScreeningFinding
+from kata.screening_system.python_ast import python_source_similarity
+from kata.screening_system.similarity import KING_NEAR_COPY_SIMILARITY_THRESHOLD
 from kata.validator_system.screening import (
     SN60_SCREENING_STAGE_EXECUTION,
     SN60_SCREENING_STAGE_STATIC,
@@ -433,6 +435,30 @@ def test_screen_submission_allows_generic_reusable_detector(tmp_path: Path) -> N
     assert decision.status == "pass"
     assert decision.review_reasons == []
     assert decision.score == 0
+
+
+def test_python_source_similarity_catches_small_ast_insertions() -> None:
+    king_agent = (
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    source_hint = str(project_dir or '')\n"
+        "    finding = {\n"
+        "        'title': 'Missing access control on privileged update',\n"
+        f"        'description': {SCREENING_DESCRIPTION!r} + source_hint[:0],\n"
+        "        'severity': 'high',\n"
+        "        'file': 'contracts/Admin.sol',\n"
+        "    }\n"
+        "    return {'vulnerabilities': [finding]}\n"
+    )
+    near_copy = king_agent.replace(
+        "    return {'vulnerabilities': [finding]}\n",
+        "    x = 0\n    return {'vulnerabilities': [finding]}\n",
+        1,
+    )
+
+    assert (
+        python_source_similarity(near_copy, king_agent)
+        >= KING_NEAR_COPY_SIMILARITY_THRESHOLD
+    )
 
 
 def test_validate_sn60_static_screening_rejects_async_agent_main(

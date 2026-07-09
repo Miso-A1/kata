@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import difflib
+from collections import Counter
 
 
 def agent_main_returns_direct_empty_report(agent_main: ast.FunctionDef) -> bool:
@@ -80,11 +81,17 @@ def python_sources_equivalent(left: str, right: str) -> bool:
 
 
 def python_source_similarity(left: str, right: str) -> float:
-    return difflib.SequenceMatcher(
+    left_normalized = normalize_python_source_for_similarity(left)
+    right_normalized = normalize_python_source_for_similarity(right)
+    sequence_similarity = difflib.SequenceMatcher(
         None,
-        normalize_python_source_for_similarity(left),
-        normalize_python_source_for_similarity(right),
+        left_normalized,
+        right_normalized,
     ).ratio()
+    return max(
+        sequence_similarity,
+        python_ast_feature_similarity(left, right),
+    )
 
 
 def normalize_python_source_for_similarity(source: str) -> str:
@@ -93,3 +100,24 @@ def normalize_python_source_for_similarity(source: str) -> str:
     except SyntaxError:
         return "\n".join(line.strip() for line in source.splitlines() if line.strip())
     return ast.dump(tree, include_attributes=False)
+
+
+def python_ast_feature_similarity(left: str, right: str) -> float:
+    try:
+        left_features = ast_feature_multiset(left)
+        right_features = ast_feature_multiset(right)
+    except SyntaxError:
+        return 0.0
+    if not left_features or not right_features:
+        return 0.0
+    overlap = sum((left_features & right_features).values())
+    total = sum(left_features.values()) + sum(right_features.values())
+    return 2 * overlap / total
+
+
+def ast_feature_multiset(source: str) -> Counter[str]:
+    tree = ast.parse(source)
+    return Counter(
+        ast.dump(node, include_attributes=False)
+        for node in ast.walk(tree)
+    )
