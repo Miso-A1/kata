@@ -579,7 +579,10 @@ def _audit_batches(
     for record in ordered:
         if record not in primary and record not in secondary_candidates:
             secondary_candidates.append(record)
-    return primary, _diverse_records(secondary_candidates, primary, limit=5)
+    secondary = _diverse_records(secondary_candidates, primary, limit=5)
+    # Compact projects often have no source outside the primary batch. Reuse that
+    # batch for an independent audit rather than leaving one permitted call idle.
+    return primary, secondary or primary
 
 
 def _planned_paths(planning: dict[str, Any], by_rel: dict[str, dict[str, Any]]) -> list[str]:
@@ -709,7 +712,8 @@ def _audit_prompt(
         )
     else:
         focus = (
-            "Independently audit cross-module behavior: authority propagation, "
+            "Independently audit cross-module behavior, or a distinct adversarial lens "
+            "when the same compact source set is repeated: authority propagation, "
             "initialization and upgrades, lifecycle and cancellation paths, role "
             "changes, oracle dependencies, and inconsistent state across callers "
             "and dependencies. Find distinct exploit paths."
