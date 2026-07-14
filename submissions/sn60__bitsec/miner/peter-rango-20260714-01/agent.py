@@ -43,7 +43,7 @@ MAX_SOURCE_BYTES = 420_000
 MAP_CHARS = 36_000
 AUDIT_CHARS = 56_000
 RELATED_CHARS = 6_000
-MAX_FINDINGS = 16
+MAX_FINDINGS = 10
 RUN_SECONDS = 27 * 60
 REQUEST_TIMEOUT = 220
 
@@ -166,7 +166,8 @@ SYSTEM_PROMPT = (
     "You are a senior smart-contract security auditor. Work only from supplied source. "
     "Report exploitable high or critical vulnerabilities with a concrete attacker action, "
     "a broken invariant, and material impact. Ignore style, gas, missing events, trust "
-    "assumptions, and speculation. Return strict JSON."
+    "assumptions, and speculation. Prefer a few fully evidenced findings over broad coverage. "
+    "Return strict JSON."
 )
 
 
@@ -219,6 +220,7 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
                 by_rel,
                 mode="cross-module",
                 max_tokens=9_000,
+                prior_findings=findings,
             )
             _append_normalized(raw, by_rel, findings)
     except Exception:
@@ -512,7 +514,9 @@ def _planning_prompt(records: list[dict[str, Any]]) -> str:
         "and cross_file_reviews. Each target must name an exact file, relevant existing "
         "functions, a rationale, and invariants to test. Do not report vulnerabilities "
         "during planning. Prioritize public state transitions that move assets, change "
-        "authority, rely on prices or signatures, settle positions, or cross boundaries.\n\n"
+        "authority, rely on prices or signatures, settle positions, or cross boundaries. "
+        "Select at most six targets and four cross-file reviews; keep rationales and "
+        "invariants short.\n\n"
         "Required shape:\n"
         '{"targets":[{"file":"exact/path","functions":["name"],"rationale":"...",'
         '"invariants":["..."]}],"cross_file_reviews":[{"files":["exact/path"],'
@@ -660,13 +664,15 @@ def _audit(
     *,
     mode: str,
     max_tokens: int,
+    prior_findings: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     if not records:
         return [], 0
     reply, status = _request(
         endpoint,
-        _audit_prompt(records, graph, planning, source_index, mode),
+        _audit_prompt(records, graph, planning, source_index, mode, prior_findings),
         max_tokens=max_tokens,
+        reasoning_effort="low",
     )
     payload = _json_object(reply)
     candidates = payload.get("vulnerabilities") or payload.get("findings") or []
@@ -692,6 +698,7 @@ def _audit_prompt(
     planning: dict[str, Any],
     source_index: dict[str, dict[str, Any]],
     mode: str,
+    prior_findings: list[dict[str, Any]] | None = None,
 ) -> str:
     if mode == "value-and-state":
         focus = (
@@ -709,6 +716,15 @@ def _audit_prompt(
         )
     plan_excerpt = json.dumps(planning, ensure_ascii=True, separators=(",", ":"))[:4_000]
     preferred_functions = _planned_functions(planning, source_index)
+    prior_context = _prior_finding_context(prior_findings or [])
+    prior_instruction = (
+        "\nEarlier audit results are listed only to prevent duplicate reports. Find a "
+        "different exploit path rather than restating any of them:\n"
+        + prior_context
+        + "\n"
+        if prior_context
+        else ""
+    )
     return (
         f"Audit mode: {mode}. {focus}\n\n"
         "Return JSON only:\n"
@@ -721,10 +737,25 @@ def _audit_prompt(
         "Every finding must prove an attacker-reachable entry point, the controlling "
         "input or state condition, the wrong transition or external effect, and a "
         "material consequence. Do not invent files, functions, or line numbers. "
-        "Omit anything uncertain. Report at most seven findings.\n\n"
+        "Omit anything uncertain. Report at most five findings.\n"
+        + prior_instruction
+        + "\n"
         f"Planning context: {plan_excerpt}\n\n"
         + _source_pack(records, graph, source_index, preferred_functions)
     )
+
+
+def _prior_finding_context(findings: list[dict[str, Any]]) -> str:
+    """Render compact, source-grounded prior findings for the second audit pass."""
+    rows: list[str] = []
+    for finding in findings[:5]:
+        file_name = _clean(finding.get("file"))
+        function = _clean(finding.get("function"))
+        title = _clean(finding.get("title"))[:140]
+        if file_name and title:
+            location = file_name + (f"::{function}" if function else "")
+            rows.append(f"- {location}: {title}")
+    return "\n".join(rows)
 
 
 def _source_pack(
@@ -1017,13 +1048,17 @@ def _normalize_finding(
     if not title or not _credible(evidence, mechanism, impact, explanation):
         return None
 
-    function = _match_function(_clean(raw.get("function") or raw.get("method")), record)
     line = _positive_line(raw.get("line"), str(record["text"]))
-    if not function and line is not None:
-        function = _function_at_line(line, record)
+    function = _match_function(_clean(raw.get("function") or raw.get("method")), record)
+    if line is not None:
+        source_function = _function_at_line(line, record)
+        if source_function:
+            function = source_function
     if function and line is None:
         line = _function_line(function, record)
-    contract = _match_contract(_clean(raw.get("contract") or raw.get("module")), record)
+    contract = _match_contract(
+        _clean(raw.get("contract") or raw.get("module")), record, line=line
+    )
     if function and function.lower() not in title.lower():
         title = f"{function} - {title}"
 
@@ -1059,9 +1094,27 @@ def _normalize_finding(
 
 def _credible(evidence: str, mechanism: str, impact: str, explanation: str) -> bool:
     combined = " ".join((evidence, mechanism, impact, explanation))
-    if len(combined) < 140:
+    if len(evidence) < 16 or len(mechanism) < 36 or len(combined) < 180:
         return False
-    if len(mechanism) < 24 and len(explanation) < 120:
+    action_terms = (
+        "attacker",
+        "caller",
+        "user",
+        "call",
+        "invoke",
+        "submit",
+        "send",
+        "trigger",
+        "front-run",
+        "reenter",
+        "withdraw",
+        "borrow",
+        "mint",
+        "swap",
+    )
+    if not any(term in mechanism.lower() for term in action_terms):
+        return False
+    if len(impact) < 16 and len(explanation) < 120:
         return False
     material_terms = (
         "drain",
@@ -1107,11 +1160,37 @@ def _function_line(name: str, record: dict[str, Any]) -> int | None:
     return None
 
 
-def _match_contract(candidate: str, record: dict[str, Any]) -> str:
+def _match_contract(candidate: str, record: dict[str, Any], *, line: int | None = None) -> str:
+    source_contract = _contract_at_line(record, line) if line is not None else ""
     for contract in record["contracts"]:
         if candidate and str(contract).lower() == candidate.lower():
-            return str(contract)
-    return str(record["contracts"][0]) if record["contracts"] else ""
+            return source_contract or str(contract)
+    if source_contract:
+        return source_contract
+    return str(record["contracts"][0]) if len(record["contracts"]) == 1 else ""
+
+
+def _contract_at_line(record: dict[str, Any], line: int) -> str:
+    """Use the source declaration nearest before a validated line as a safe fallback."""
+    extension = str(record["ext"])
+    if extension == ".sol":
+        pattern = SOL_CONTRACT_RE
+    elif extension == ".cairo":
+        pattern = CAIRO_CONTRACT_RE
+    elif extension == ".move":
+        pattern = MOVE_MODULE_RE
+    elif extension == ".rs":
+        pattern = RUST_TYPE_RE
+    else:
+        return ""
+    selected = ""
+    text = str(record["text"])
+    for match in pattern.finditer(text):
+        match_line = text.count("\n", 0, match.start()) + 1
+        if match_line > line:
+            break
+        selected = str(match.group(1))
+    return selected
 
 
 def _positive_line(value: Any, text: str) -> int | None:
